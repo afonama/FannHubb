@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fanhub-plus"
+version = "1.0.0"
+description = "Fan Hub Plus - a fandom content, discovery and community API."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+  "fastapi==0.115.0",
+  "uvicorn[standard]==0.30.6",
+  "sqlalchemy[asyncio]==2.0.35",
+  "alembic==1.13.2",
+  "asyncpg==0.30.0",
+  "psycopg2-binary==2.9.10",
+  "pydantic==2.9.2",
+  "pydantic-settings==2.5.2",
+  "email-validator==2.2.0",
+  "pyjwt==2.11.0",
+  "argon2-cffi==23.1.0",
+  "redis==5.2.0",
+  "apscheduler==3.10.4",
+  "python-multipart==0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.3",
+  "pytest-asyncio==0.24.0",
+  "httpx==0.27.2",
+  "anyio==4.6.2",
+]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers"
+markers = [
+  "db: requires a reachable PostgreSQL (Neon) database; skipped otherwise.",
+  "redis: requires a reachable Redis server; skipped otherwise.",
+  "slow: takes more than a second.",
+]
+filterwarnings = [
+  "error::DeprecationWarning:app.*",
+  "ignore::DeprecationWarning",
+]
