@@ -5,7 +5,9 @@ __pycache__/
 .venv/
 venv/
 .env/
-
+logs_boot.out
+logs_boot.err
+logs_boot.pid
 # Environment / secrets - NEVER commit
 .env
 .env.*
