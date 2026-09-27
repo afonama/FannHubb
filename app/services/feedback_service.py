@@ -13,7 +13,7 @@ from app.core.logging_config import get_logger
 from app.db.models.feedback import Feedback, FeedbackStatus, FeedbackType
 from app.db.models.user import User
 from app.schemas.common import Page, PageParams
-from app.schemas.feedback import FeedbackCreate, FeedbackRead, FeedbackUpdate
+from app.schemas.feedback import FeedbackAdminRead, FeedbackCreate, FeedbackRead, FeedbackUpdate
 
 logger = get_logger(__name__)
 
@@ -45,7 +45,7 @@ async def list_feedback(
     *,
     status: Optional[FeedbackStatus] = None,
     type_: Optional[FeedbackType] = None,
-) -> Page[FeedbackRead]:
+) -> Page[FeedbackAdminRead]:
     stmt = select(Feedback)
     if status is not None:
         stmt = stmt.where(Feedback.status == status)
@@ -67,7 +67,7 @@ async def list_feedback(
         .all()
     )
     return Page.build(
-        [FeedbackRead.model_validate(row) for row in rows], total, page.page, page.page_size
+        [FeedbackAdminRead.model_validate(row) for row in rows], total, page.page, page.page_size
     )
 
 
@@ -96,7 +96,7 @@ async def list_user_feedback(
 
 async def update_feedback(
     session: AsyncSession, feedback_id: int, payload: FeedbackUpdate, actor: Optional[User] = None
-) -> FeedbackRead:
+) -> FeedbackAdminRead:
     feedback = await session.get(Feedback, feedback_id)
     if feedback is None:
         raise NotFoundError(f"feedback {feedback_id} not found")
@@ -112,7 +112,7 @@ async def update_feedback(
         "feedback_updated",
         extra={"feedback_id": feedback_id, "fields": sorted(changes), "actor_id": getattr(actor, "id", None)},
     )
-    return FeedbackRead.model_validate(feedback)
+    return FeedbackAdminRead.model_validate(feedback)
 
 
 async def moderation_counts(session: AsyncSession) -> dict[str, int]:

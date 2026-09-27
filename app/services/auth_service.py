@@ -47,8 +47,15 @@ from app.services.user_service import fetch_user_by_email, fetch_user_by_id, get
 logger = get_logger(__name__)
 
 #: Why a password reset email was (not) sent - kept out of the HTTP response.
+#: Both are constant regardless of whether the address is registered.
 _FORGOT_PASSWORD_GENERIC_MESSAGE = (
-    "If that email is registered, a password reset link has been generated."
+    "If that email is registered, a password reset link has been generated. "
+    "It was written to the server log rather than emailed; follow it from there."
+)
+_FORGOT_PASSWORD_NO_DELIVERY_MESSAGE = (
+    "If that email is registered, the request was accepted. This deployment has "
+    "no reset delivery channel configured, so no link was generated. "
+    "Contact an administrator to have your password reset."
 )
 
 
@@ -281,7 +288,26 @@ async def verify_email(session: AsyncSession, raw_token: str) -> User:
 
 
 async def forgot_password(session: AsyncSession, email: str) -> ForgotPasswordResponse:
-    """Always return the same envelope so accounts cannot be enumerated."""
+    """Always return the same envelope so accounts cannot be enumerated.
+
+    ``message`` and ``delivery`` come from server configuration, never from
+    whether the address exists, so neither leaks account existence. When
+    delivery is ``none`` no token is minted at all - returning "a link has been
+    generated" while generating nothing was the original defect.
+    """
+    delivery = settings.password_reset_delivery
+    message = (
+        _FORGOT_PASSWORD_GENERIC_MESSAGE
+        if delivery == "log"
+        else _FORGOT_PASSWORD_NO_DELIVERY_MESSAGE
+    )
+
+    if delivery == "none":
+        # Do not create a token that can never be delivered: it would leave
+        # unusable rows in auth_tokens and imply a working flow that does not exist.
+        logger.info("password_reset_skipped_no_delivery", extra={"delivery": delivery})
+        return ForgotPasswordResponse(message=message, delivery=delivery, reset_url=None)
+
     user = await fetch_user_by_email(session, email)
     reset_url: Optional[str] = None
 
@@ -289,12 +315,18 @@ async def forgot_password(session: AsyncSession, email: str) -> ForgotPasswordRe
         raw_token, expires_at = await issue_password_reset_token(session, user)
         reset_url = f"{settings.public_base_url.rstrip('/')}/reset-password?token={raw_token}"
         logger.info(
-            "password_reset_requested",
-            extra={"user_id": user.id, "expires_at": expires_at.isoformat(), "reset_url": reset_url},
+            "password_reset_link_issued",
+            extra={
+                "user_id": user.id,
+                "expires_at": expires_at.isoformat(),
+                "delivery": delivery,
+                "reset_url": reset_url,
+            },
         )
 
     return ForgotPasswordResponse(
-        message=_FORGOT_PASSWORD_GENERIC_MESSAGE,
+        message=message,
+        delivery=delivery,
         reset_url=reset_url if settings.debug else None,
     )
 

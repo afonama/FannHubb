@@ -64,8 +64,50 @@ python scripts/seed.py --reset  # drop seeded rows first
 
 Creates 8 categories, 40 content items, users and preferences, characters,
 merchandise, events, FAQs, plus sample ratings, bookmarks, submissions and
-feedback. Seeded logins come from `SEED_*` in `.env` (admin
-`admin@fanhubplus.dev` / `Admin@12345` by default - change them).
+feedback.
+
+#### Seeded logins
+
+`scripts/seed.py` creates one admin and three registered accounts. Every
+address comes from `SEED_*` in `.env`; the password for the three registered
+users is shared (`SEED_USER_PASSWORD`). Change all of them before seeding
+anything you intend to expose.
+
+| Role      | `SEED_ADMIN_EMAIL`           | Password                  | Notes                                        |
+| --------- | ---------------------------- | ------------------------- | -------------------------------------------- |
+| Admin     | `SEED_ADMIN_EMAIL`           | `SEED_ADMIN_PASSWORD`     | Moderation, content CRUD, `/admin/*`         |
+| Registered| `SEED_USER_EMAILS[0]`        | `SEED_USER_PASSWORD`      | Ratings, bookmarks, submissions, feedback    |
+| Registered| `SEED_USER_EMAILS[1]`        | `SEED_USER_PASSWORD`      | Same tier, different data                    |
+| Registered| `SEED_USER_EMAILS[2]`        | `SEED_USER_PASSWORD`      | Same tier, different data                    |
+
+The three addresses are read from the comma-separated `SEED_USER_EMAILS` and
+exposed as `settings.seed_user_email_list`. `.env.example` ships placeholders
+only; the defaults baked into `app/core/config.py` exist so a fresh clone runs,
+and are not safe to expose.
+
+`user_preferences` rows are created for every seeded user **except** the admin,
+so the dashboard's get-or-create path is exercised on first admin login.
+
+#### Password reset
+
+There is **no mail transport**. The link is produced by one of two honest paths,
+selected by `PASSWORD_RESET_DELIVERY`:
+
+- `log` (default, development) - a single-use token is minted and the full
+  `/reset-password?token=...` URL is written to the `password_reset_link_issued`
+  log line. The operator hands it over. `GET /reset-password` serves a working
+  form that consumes the token.
+- `none` - **no token is minted** and the response says delivery is not
+  configured, instead of claiming a link was generated.
+
+`POST /api/v1/auth/forgot-password` returns the same `message` and `delivery`
+for every address, registered or not, so it cannot be used to enumerate
+accounts. `reset_url` is populated only when `DEBUG=true`, for local testing.
+
+Before going live: wire a real transport, set `PASSWORD_RESET_DELIVERY=none`,
+and note that `validate_runtime` logs a warning while `log` is active in
+`APP_ENV=prod`, because single-use reset tokens should not sit in production
+logs.
 
 ### Schema export
 
@@ -97,7 +139,7 @@ written through `POST /content/{id}/rate` (upsert) and read via
 | Users         | `users/me`, `PATCH users/me`, `users/me/avatar`, `users/me/preferences`, `users/me/bookmarks`, `users/me/dashboard`                        |
 | Catalogue     | `content`, `content/{id}`, `categories`, `categories/{slug}`, `characters`, `characters/{id}`, `merchandise`, `merchandise/{id}`, `events`, `events/{id}` |
 | Engagement    | `bookmarks` (list/create/delete), `content/{id}/rate`, `content/{id}/rating`, `content/{id}/rating/me`, `feedback`, `submissions`        |
-| Chatbot       | `chatbot/message`, `chatbot/history/{session_id}`                                                                                             |
+| Chatbot       | `chatbot/message` (visitor or JWT), `chatbot/history/{session_id}` (JWT **+** `?session_token=`, owner only)                                    |
 | Admin         | `admin/content`, `admin/characters`, `admin/merchandise`, `admin/feedback`, `admin/submissions`, `admin/stats`, `admin/tasks/flush-popularity` |
 | Health        | `health`, `health/live`                                                                                                                      |
 
@@ -124,6 +166,24 @@ without a token) and `AdminUser` (401 anonymous, 403 non-admin). A *present but
 invalid* token always 401s - silently downgrading to anonymous would hide client
 bugs and revoked sessions.
 
+**Ownership vs identifiers.** A path parameter is a locator, never a credential.
+Anything that reads a *specific* user-owned row (currently
+`GET /chatbot/history/{session_id}`) requires `CurrentUser` **and** an opaque
+`session_token`, then checks the token matches and the row's `user_id` is either
+the caller or unclaimed. Sequential ids are enumerable, so possession of an id
+must never be enough.
+
+**Response schemas are the disclosure boundary.** `FeedbackRead` (what a
+submitter sees) has no `admin_note`; `FeedbackAdminRead` adds it. Splitting the
+model rather than nulling the field in the service means a new public route
+cannot leak the note by accident.
+
+**Write-then-read ordering.** Mutating services `flush()`, read the row back to
+build the response, and only then `commit()`. The session runs `autoflush=False`,
+so the explicit flush is what makes the read-back see the change. Any failure
+before the commit rolls the write back with the request, instead of persisting
+work and then returning 500 for it.
+
 **Popularity.** The read path never writes to PostgreSQL: `GET /content/{id}`
 issues a Redis `INCR`. APScheduler flushes every
 `POPULARITY_FLUSH_INTERVAL_SECONDS`, first `RENAME`-ing each pending counter to a
@@ -143,8 +203,12 @@ index-assisted rather than a `ILIKE` scan.
 prefilter refined in Python with haversine. No PostGIS dependency.
 
 **Rate limiting.** Fixed-window `INCR` with the TTL set on first hit, keyed by
-client IP (honouring one proxy hop) plus user id when authenticated. Scopes:
-`register`, `login`, `forgot_password`, `feedback`, `chatbot`.
+client IP as resolved from `X-Forwarded-For` / `X-Real-IP` / the socket peer. The
+auth routes tighten that to `IP|email` so one account cannot exhaust a shared
+NAT's quota. Scopes: `register`, `login`, `forgot_password`, `feedback`,
+`chatbot`. Because `X-Forwarded-For` is trusted unconditionally, a direct client
+can rotate it to sidestep every limit - only expose the API through a proxy that
+overwrites that header.
 
 **Cache fallback.** With `REDIS_URL` unreachable the app logs a warning and uses
 an in-process cache with matching semantics. That keeps a laptop bootable; it is
@@ -162,31 +226,66 @@ untouched.
 ## Testing
 
 ```bash
-pytest                        # everything
-pytest -m "not db"            # skip the database-backed tests
-pytest -m db                  # only the database-backed tests
+pytest                          # everything
+pytest -m "not db"              # skip the database-backed tests
+pytest -m db                    # only the database-backed tests
 ```
 
 Tests that need PostgreSQL are marked `db` and skip automatically when no
-reachable server is configured, so the suite is green offline. Point them at a
-throwaway database - each test creates and drops its own schema:
+reachable server is configured, so the suite is green offline.
+
+**Test isolation uses a throwaway database, not a per-test schema.** Set
+`TEST_DATABASE_URL` to a server you are allowed to create databases on; the
+session fixture then creates `TEST_DB_NAME` (`fanhub_test` by default), runs
+Alembic against it, and drops it on the way out:
 
 ```bash
-TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/fanhubplus_test pytest -m db
+TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/postgres pytest -m db
 ```
 
-| File                             | Covers                                                          |
-| -------------------------------- | --------------------------------------------------------------- |
-| `test_models.py`                 | Mapper configuration, constraints, index coverage                |
-| `test_openapi.py`                | Route inventory, error contract, access tiers                    |
-| `test_security.py`               | Password hashing, JWT issue/verify/refresh, revocation, SSL modes |
-| `test_schemas.py`                | Field bounds, validators, enum values                            |
-| `test_cache_and_rate_limit.py`   | Cache semantics, TTL, atomic `RENAME`, fixed-window limits       |
-| `test_popularity.py`             | Score maths, counter drain, mid-flush view safety                |
-| `test_chatbot.py`                | Tokenising, FAQ scoring, provider selection, disabled gate        |
-| `test_service_contracts.py`      | Service signatures the DB tests depend on                        |
-| `test_migration.py`              | Initial revision matches `Base.metadata` (rendered offline)      |
-| `test_integration_db.py`         | Auth, ratings, bookmarks, content, chatbot, HTTP layer (needs DB) |
+The target database is recreated even if a previous run crashed and left it
+behind, and its connections are terminated before the drop. The database named
+in `TEST_DATABASE_URL` is only used as the migration source - it is never
+migrated or written to. Schemas are *not* used for isolation: a pooled endpoint
+binds a connection to whichever backend it lands on, so a search-path-scoped
+schema can leak onto the next tenant's connection, and schema-local native
+enums collide with the ones in `public`.
+
+The role needs `CREATEDB`, or `CREATE DATABASE`/`DROP DATABASE` plus permission
+to terminate connections. On a hosted server such as Neon, use the pooled
+hostname with the owner role.
+
+### Stress and load
+
+`tests/test_stress.py` has two tiers. The default tier covers concurrency and
+abuse resistance: overlapping reads, concurrent rating upserts converging on one
+row, concurrent submissions all landing, and the rate limiter's quota, retry
+header, and per-identity isolation. The heavy tier is opt-in because a remote
+database costs a network round trip per request:
+
+```bash
+RUN_STRESS=1 pytest tests/test_stress.py -k "sustained or high_parallelism"
+RUN_STRESS=1 STRESS_ROUNDS=200 STRESS_CONCURRENCY=100 pytest tests/test_stress.py
+```
+
+The rate-limit checks use a unique scope per run and delete their keys, so they
+neither need nor disturb a real Redis budget.
+
+| File                      | Marker  | Covers                                                                          |
+| ------------------------- | ------- | ------------------------------------------------------------------------------- |
+| `support.py`              | -       | Shared credentials, constants and HTTP helpers; import it, don't run it         |
+| `test_regressions.py`     | `db`    | One case per audited SRS defect, so a fix cannot silently regress               |
+| `test_functional.py`      | `db`    | End-to-end HTTP contracts: auth, RBAC, content, engagement, admin, edge inputs   |
+| `test_search_path.py`     | `db`    | `DB_SEARCH_PATH` quoting, transaction-local application, no pooled leakage      |
+| `test_stress.py`          | `db`    | Concurrency, rating-upsert races, rate limiting, opt-in sustained load          |
+| `test_logging_contract.py`| -       | Static check that no `extra=` key shadows a reserved `LogRecord` attribute      |
+
+### Test environment
+
+`tests/conftest.py` sets the process environment before the application is
+imported, so the suite never talks to your development or production data. It
+disables Redis and rate limiting, uses a local in-process cache, and points mail
+delivery at logs.
 
 ## Layout
 

@@ -104,7 +104,14 @@ async def save_avatar(user_id: int, upload: UploadFile) -> tuple[str, int]:
     public_url = avatar_public_path(filename)
     logger.info(
         "avatar_stored",
-        extra={"user_id": user_id, "filename": filename, "bytes": written, "content_type": content_type},
+        # "filename" is a reserved LogRecord attribute; passing it via extra
+        # makes logging raise KeyError and turns a stored upload into a 500.
+        extra={
+            "user_id": user_id,
+            "stored_filename": filename,
+            "bytes": written,
+            "content_type": content_type,
+        },
     )
     return public_url, written
 

@@ -102,6 +102,12 @@ async def _resolve_principal(
     payload = decode_token(token, "access")
     user = await auth_service.authenticate_access_token(db, token)
     request.state.current_user = user
+    # Snapshot the id as a plain int *now*, while the instance is still loaded.
+    # ``get_db`` rolls the session back on any error, and ``Session.rollback()``
+    # expires every instance in the identity map; re-reading ``user.id`` after
+    # that point raises DetachedInstanceError. Anything that needs the id later
+    # (access logs, rate-limit identities) must use this scalar instead.
+    request.state.current_user_id = user.id
     request.state.access_payload = payload
     return user, payload
 

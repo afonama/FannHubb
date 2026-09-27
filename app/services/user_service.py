@@ -6,6 +6,7 @@ import datetime as dt
 from typing import Any, Optional, Sequence
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -88,10 +89,23 @@ async def update_profile(session: AsyncSession, user: User, payload: UserUpdate)
 async def get_or_create_preferences(session: AsyncSession, user: User) -> UserPreference:
     if user.preference is not None:
         return user.preference
-    preference = UserPreference(user_id=user.id, favorite_categories=[], display_prefs={})
-    session.add(preference)
-    await session.flush()
-    await session.refresh(preference)
+
+    # This is called three times per dashboard render (stats, favorite fandoms,
+    # recommendations), so it has to be idempotent. A plain get-then-insert did
+    # not set ``user.preference`` on the way out, which left the guard above
+    # reading None on the second call and raised UniqueViolation on the primary
+    # key for every user that had no row yet. ON CONFLICT DO NOTHING also makes
+    # two concurrent requests for the same user safe.
+    await session.execute(
+        pg_insert(UserPreference)
+        .values(user_id=user.id, favorite_categories=[], display_prefs={})
+        .on_conflict_do_nothing(index_elements=[UserPreference.user_id])
+    )
+    preference = await session.get(UserPreference, user.id)
+    if preference is None:  # pragma: no cover - the insert above guarantees a row
+        raise NotFoundError(f"preferences for user {user.id} not found")
+    # Keep the identity map in step so the fast path at the top actually hits.
+    user.preference = preference
     return preference
 
 
@@ -320,9 +334,12 @@ async def _recommended_content(
 
 
 async def _bookmark_previews(session: AsyncSession, user: User, limit: int = _DASHBOARD_BOOKMARK_LIMIT) -> list[BookmarkPreview]:
+    from app.schemas.common import PageParams
     from app.services import bookmark_service
 
-    bookmarks = await bookmark_service.list_bookmarks(session, user, limit=limit, offset=0)
+    # ``list_bookmarks`` takes PageParams; it has no limit/offset keywords. This
+    # dashboard slice is a fixed top-N preview, so page 1 is always correct here.
+    bookmarks = await bookmark_service.list_bookmarks(session, user, PageParams(page=1, page_size=limit))
     return [bookmark_service.to_preview(bookmark) for bookmark in bookmarks]
 
 

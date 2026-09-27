@@ -43,7 +43,12 @@ minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
+# One event loop for the whole session. app.db.session builds a module-level
+# engine with a connection pool, and a pooled connection is bound to the loop
+# that opened it - a per-test loop would strand the pool on a closed loop, and
+# would re-create the session-scoped fixtures on every test. tests/conftest.py
+# applies `pytest.mark.asyncio(loop_scope="session")` to match.
+asyncio_default_fixture_loop_scope = "session"
 addopts = "-ra --strict-markers"
 markers = [
   "db: requires a reachable PostgreSQL (Neon) database; skipped otherwise.",

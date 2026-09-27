@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import ErrorCode, NotFoundError, ServiceDisabledError
+from app.core.errors import ErrorCode, ForbiddenError, NotFoundError, ServiceDisabledError
 from app.core.logging_config import get_logger
 from app.core.redis_client import get_cache
 from app.db.models.chatbot import ChatbotFaq, ChatbotMessage, ChatbotSession, MessageRole
@@ -363,11 +363,38 @@ async def handle_message(
 
 
 async def get_history(
-    session: AsyncSession, session_id: int, limit: int = 50
+    session: AsyncSession,
+    session_id: int,
+    *,
+    session_token: str,
+    user_id: int,
+    limit: int = 50,
 ) -> tuple[ChatbotSession, list[ChatbotMessage]]:
+    """Load a transcript, but only for the caller who owns the thread.
+
+    A bare ``session_id`` is not a credential: ids are small sequential integers
+    and therefore trivially enumerable. Two independent checks are required -
+    the opaque ``session_token`` must match, and the thread must not already
+    belong to a different account.
+    """
     thread = await session.get(ChatbotSession, session_id)
     if thread is None:
         raise NotFoundError(f"chatbot session {session_id} not found")
+
+    if not secrets.compare_digest(thread.session_token, session_token):
+        raise ForbiddenError("This chatbot session does not belong to you")
+
+    if thread.user_id is not None and thread.user_id != user_id:
+        raise ForbiddenError("This chatbot session belongs to another account")
+
+    # An anonymous thread claimed by a signed-in user is adopted here, mirroring
+    # ``resolve_session`` so the two paths cannot disagree about ownership.
+    if thread.user_id is None:
+        thread.user_id = user_id
+        session.add(thread)
+        await session.commit()
+        await session.refresh(thread)
+
     rows = list(
         (
             await session.execute(

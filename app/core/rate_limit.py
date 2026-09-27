@@ -3,9 +3,14 @@
 Used as a FastAPI dependency:  ``dependencies=[RateLimiter.for_endpoint("login")]``
 
 The counter is an ``INCR`` on ``fanhub:rl:<scope>:<identity>`` with the window TTL
-applied on first hit, which keeps the operation to a single round trip. Identities
-combine client IP with the authenticated user id (when present) so a shared NAT
-does not punish unrelated visitors, while a single abusive client is still capped.
+applied on first hit, which keeps the operation to a single round trip.
+
+Identities are per client IP as resolved by :func:`client_ip`. The auth routes
+tighten that further with :func:`enforce_rate_limit`, bucketing on
+``IP|email`` so one account cannot burn a shared NAT's quota. NOTE: ``client_ip``
+trusts ``X-Forwarded-For`` unconditionally, so a direct client can rotate that
+header to sidestep these limits; only front the app with a proxy that overwrites
+it. See the remediation report.
 """
 
 from __future__ import annotations
@@ -46,13 +51,6 @@ def client_ip(request: Request) -> str:
     if real_ip:
         return real_ip.strip()
     return request.client.host if request.client else "unknown"
-
-
-def _identity(request: Request) -> str:
-    """Client IP plus the authenticated user id when there is one."""
-    user = getattr(request.state, "current_user", None)
-    user_id = getattr(user, "id", None)
-    return f"{client_ip(request)}|u{user_id}" if user_id else client_ip(request)
 
 
 class RateLimiter:

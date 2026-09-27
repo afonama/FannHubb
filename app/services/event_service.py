@@ -69,8 +69,10 @@ def _build_query(filters: EventQuery) -> Select:
     if filters.category:
         stmt = stmt.where(Category.slug == filters.category.strip().lower())
     if filters.from_date:
+        # "From" means "not finished by this date". Adding a start_date <= bound
+        # here would narrow the result to events already under way, which is a
+        # different question and silently dropped every future event.
         stmt = stmt.where(Event.end_date.isnot(None), Event.end_date >= filters.from_date)
-        stmt = stmt.where(Event.start_date <= filters.from_date)
     if filters.to_date:
         stmt = stmt.where(Event.start_date <= filters.to_date)
     if filters.upcoming_only:

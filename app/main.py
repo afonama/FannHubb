@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -52,6 +52,86 @@ def error_payload(
     }
 
 
+#: Minimal page for the ``?token=`` link that ``forgot-password`` hands out. The
+#: token is read from the URL by the script below and never interpolated into the
+#: markup, so there is no reflected-XSS surface on this page.
+RESET_PASSWORD_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reset your password - Fan Hub Plus</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; display: grid;
+         place-items: center; min-height: 100vh; }
+  main { width: min(26rem, 92vw); padding: 1.5rem; }
+  h1 { font-size: 1.35rem; margin: 0 0 1rem; }
+  label { display: block; margin: .75rem 0 .25rem; font-size: .9rem; }
+  input { width: 100%; padding: .55rem; font: inherit; box-sizing: border-box;
+          border: 1px solid #8886; border-radius: .4rem; }
+  button { margin-top: 1rem; width: 100%; padding: .6rem; font: inherit;
+           border: 0; border-radius: .4rem; cursor: pointer; }
+  #msg { margin-top: 1rem; font-size: .9rem; }
+  .err { color: #c0392b; } .ok { color: #1e8449; }
+  .hint { font-size: .82rem; opacity: .75; margin-top: .5rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reset your password</h1>
+  <form id="f" novalidate>
+    <label for="t">Reset token</label>
+    <input id="t" name="token" autocomplete="off" required>
+    <label for="p">New password</label>
+    <input id="p" name="new_password" type="password" autocomplete="new-password"
+           minlength="8" required>
+    <div class="hint">At least 8 characters, including one letter and one digit.</div>
+    <button type="submit">Set new password</button>
+  </form>
+  <div id="msg" role="status" aria-live="polite"></div>
+</main>
+<script>
+  var form = document.getElementById('f');
+  var out = document.getElementById('msg');
+  var params = new URLSearchParams(location.search);
+  if (params.get('token')) { document.getElementById('t').value = params.get('token'); }
+  if (!params.get('token')) {
+    out.className = 'err';
+    out.textContent = 'This link is missing its reset token. Request a new one.';
+  }
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    out.className = ''; out.textContent = 'Working...';
+    try {
+      var res = await fetch('__RESET_API__', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: document.getElementById('t').value,
+          new_password: document.getElementById('p').value
+        })
+      });
+      var body = await res.json().catch(function () { return {}; });
+      if (res.ok) {
+        out.className = 'ok';
+        out.textContent = body.message || 'Password updated. You can now sign in.';
+        form.reset();
+      } else {
+        out.className = 'err';
+        out.textContent = body.message || 'Could not reset the password (' + res.status + ').';
+      }
+    } catch (err) {
+      out.className = 'err';
+      out.textContent = 'Network error: ' + err.message;
+    }
+  });
+</script>
+</body>
+</html>
+"""
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Assign a request id, time the handler, and emit one structured access log."""
 
@@ -85,7 +165,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 "path": request.url.path,
                 "status_code": response.status_code,
                 "duration_ms": duration_ms,
-                "user_id": getattr(getattr(request.state, "current_user", None), "id", None),
+                # Read the scalar id snapshotted in ``_resolve_principal``. The ORM
+                # instance on request.state is expired by the rollback that follows
+                # any handled error, so touching it here would turn a correct 4xx
+                # into a 500.
+                "user_id": getattr(request.state, "current_user_id", None),
             },
         )
         return response
@@ -295,6 +379,23 @@ def create_app() -> FastAPI:
             "docs": "/docs" if settings.docs_enabled else None,
             "api": settings.api_v1_prefix,
         }
+
+    # Served at the root, not under the API prefix: the emailed/logged link is
+    # built from PUBLIC_BASE_URL + "/reset-password", so this is the path a user
+    # actually lands on. __RESET_API__ is our own configured prefix, not user input.
+    @app.get(
+        "/reset-password",
+        tags=["auth"],
+        summary="Password reset page",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
+    async def reset_password_page() -> HTMLResponse:
+        return HTMLResponse(
+            RESET_PASSWORD_PAGE.replace(
+                "__RESET_API__", f"{settings.api_v1_prefix}/auth/reset-password"
+            )
+        )
 
     _install_error_contract(app)
     return app

@@ -60,7 +60,10 @@ async def rate_content(
             "content_id": content_id,
             "scale": payload.scale.value,
             "value": payload.value,
-            "created": created,
+            # NOT "created": that is a reserved LogRecord attribute, and passing
+            # it through extra makes logging raise KeyError *after* the commit,
+            # so the write lands but the caller is told 500.
+            "rating_created": created,
         },
     )
     return RatingResponse(

@@ -12,9 +12,11 @@ Neon specifics handled here:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -103,6 +105,22 @@ def prepare_async_dsn(url: str) -> tuple[str, dict[str, Any]]:
     return rewritten, connect_args
 
 
+#: A schema search_path is interpolated into DDL/DML, so it is restricted to
+#: plain identifiers. Rejecting anything else keeps an operator-supplied
+#: DB_SEARCH_PATH from becoming an injection vector.
+_SEARCH_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_$]*)*$")
+
+
+def quote_search_path(schema: str) -> str:
+    """Validate a search_path string and return it as a quoted SQL literal list."""
+    if not _SEARCH_PATH_RE.match(schema.strip()):
+        raise ValueError(
+            "DB_SEARCH_PATH must be a comma-separated list of plain identifiers, "
+            f"got {schema!r}"
+        )
+    return ", ".join(f'"{part.strip()}"' for part in schema.split(","))
+
+
 def build_engine(
     url: Optional[str] = None,
     *,
@@ -115,10 +133,8 @@ def build_engine(
     dsn = url or settings.database_url
     clean_url, connect_args = prepare_async_dsn(dsn)
 
-    schema = search_path if search_path is not None else settings.db_search_path
-    if schema:
-        connect_args.setdefault("server_settings", {})
-        connect_args["server_settings"]["search_path"] = schema
+    schema = (search_path if search_path is not None else settings.db_search_path).strip()
+    literal = quote_search_path(schema) if schema else None
 
     engine = create_async_engine(
         clean_url,
@@ -130,6 +146,23 @@ def build_engine(
         pool_pre_ping=True,
         connect_args=connect_args,
     )
+
+    if literal:
+        # Deliberately NOT passed via connect_args["server_settings"]. On a
+        # pooled endpoint (PgBouncer/Neon "-pooler") startup parameters are
+        # applied to whichever backend wins the connection and then persist for
+        # later borrowers of that backend. A search_path sent that way can leave
+        # a backend pinned to a schema that no longer exists, after which new
+        # connections fail with "no schema has been selected to create in" or
+        # "cache lookup failed for type <oid>" on any native enum.
+        #
+        # SET LOCAL is transaction-scoped instead: it is applied to the backend
+        # that actually runs the transaction and is discarded at COMMIT, so it
+        # cannot leak to another logical connection.
+        @event.listens_for(engine.sync_engine, "begin")
+        def _apply_search_path(dbapi_connection) -> None:
+            dbapi_connection.exec_driver_sql(f"SET LOCAL search_path TO {literal}")
+
     logger.info(
         "engine_created",
         extra={

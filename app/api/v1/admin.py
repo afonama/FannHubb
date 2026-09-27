@@ -14,7 +14,7 @@ from app.schemas.admin import AdminStats, TaskResult
 from app.schemas.character import CharacterCreate, CharacterRead, CharacterUpdate
 from app.schemas.common import MessageResponse, Page
 from app.schemas.content import ContentCreate, ContentDetail, ContentFilters, ContentListItem, ContentUpdate
-from app.schemas.feedback import FeedbackRead, FeedbackUpdate
+from app.schemas.feedback import FeedbackAdminRead, FeedbackUpdate
 from app.schemas.merchandise import MerchandiseCreate, MerchandiseRead, MerchandiseUpdate
 from app.schemas.submission import SubmissionListItem, SubmissionUpdate
 from app.db.session import async_session_maker
@@ -196,7 +196,7 @@ async def review_submission(
 
 
 # ----------------------------------------------------------------- feedback
-@router.get("/feedback", response_model=Page[FeedbackRead], summary="List feedback")
+@router.get("/feedback", response_model=Page[FeedbackAdminRead], summary="List feedback")
 async def list_feedback(
     db: DbSession,
     admin: AdminUser,
@@ -205,25 +205,27 @@ async def list_feedback(
         Optional[FeedbackStatus], Query(alias="status", description="open | reviewed | closed")
     ] = None,
     type_filter: Annotated[Optional[FeedbackType], Query(alias="type", description="bug | suggestion | query")] = None,
-) -> Page[FeedbackRead]:
+) -> Page[FeedbackAdminRead]:
     return await feedback_service.list_feedback(db, pagination, status=status_filter, type_=type_filter)
 
 
-@router.get("/feedback/{feedback_id}", response_model=FeedbackRead, summary="Feedback detail")
-async def get_feedback_item(feedback_id: int, db: DbSession, admin: AdminUser) -> FeedbackRead:
+@router.get("/feedback/{feedback_id}", response_model=FeedbackAdminRead, summary="Feedback detail")
+async def get_feedback_item(feedback_id: int, db: DbSession, admin: AdminUser) -> FeedbackAdminRead:
     from app.core.errors import NotFoundError
     from app.db.models.feedback import Feedback
 
     feedback = await db.get(Feedback, feedback_id)
     if feedback is None:
         raise NotFoundError(f"feedback {feedback_id} not found")
-    return FeedbackRead.model_validate(feedback)
+    return FeedbackAdminRead.model_validate(feedback)
 
 
-@router.patch("/feedback/{feedback_id}", response_model=FeedbackRead, summary="Update feedback")
+@router.patch(
+    "/feedback/{feedback_id}", response_model=FeedbackAdminRead, summary="Update feedback"
+)
 async def update_feedback_item(
     feedback_id: int, payload: FeedbackUpdate, db: DbSession, admin: AdminUser
-) -> FeedbackRead:
+) -> FeedbackAdminRead:
     return await feedback_service.update_feedback(db, feedback_id, payload, admin)
 
 

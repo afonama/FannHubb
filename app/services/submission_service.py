@@ -75,7 +75,7 @@ async def list_user_submissions(
 async def list_submissions(
     session: AsyncSession, page: PageParams, *, status: Optional[SubmissionStatus] = None
 ) -> Page[SubmissionListItem]:
-    stmt = select(FanSubmission).options(selectinload(FanSubmission.user))
+    stmt = select(FanSubmission).options(selectinload(FanSubmission.author))
     if status is not None:
         stmt = stmt.where(FanSubmission.status == status)
 
@@ -94,7 +94,7 @@ async def list_submissions(
         .unique()
         .all()
     )
-    items = [await _to_list_item(row, getattr(row, "user", None)) for row in rows]
+    items = [await _to_list_item(row, getattr(row, "author", None)) for row in rows]
     return Page.build(items, total, page.page, page.page_size)
 
 
@@ -102,20 +102,31 @@ async def get_submission(session: AsyncSession, submission_id: int) -> Submissio
     submission = (
         await session.execute(
             select(FanSubmission)
-            .options(selectinload(FanSubmission.user))
+            .options(selectinload(FanSubmission.author))
             .where(FanSubmission.id == submission_id)
         )
     ).scalar_one_or_none()
     if submission is None:
         raise NotFoundError(f"submission {submission_id} not found")
-    return await _to_list_item(submission, submission.user)
+    return await _to_list_item(submission, submission.author)
 
 
 async def review_submission(
     session: AsyncSession, submission_id: int, payload: SubmissionUpdate, reviewer: User
 ) -> SubmissionListItem:
     """Approve or reject a submission; the review is attributed to ``reviewer``."""
-    submission = await session.get(FanSubmission, submission_id)
+    # Not session.get(): `author` is lazy="noload", so a plain get() would put
+    # None into the identity-mapped instance and the selectinload in
+    # get_submission() below would then be skipped, silently nulling
+    # author_name/author_email on the response. Load it the same way the
+    # read-back does.
+    submission = (
+        await session.execute(
+            select(FanSubmission)
+            .options(selectinload(FanSubmission.author))
+            .where(FanSubmission.id == submission_id)
+        )
+    ).scalar_one_or_none()
     if submission is None:
         raise NotFoundError(f"submission {submission_id} not found")
 
@@ -126,12 +137,21 @@ async def review_submission(
     submission.updated_at = dt.datetime.now(dt.timezone.utc)
 
     session.add(submission)
+
+    # Ordering matters. The session runs with autoflush=False, so flush() is what
+    # makes this transaction's own changes visible to the read-back query below.
+    # Reading back *before* committing means a failure anywhere in the response
+    # build rolls the review back with the request, instead of persisting a write
+    # and then returning 500 for work that actually succeeded.
+    await session.flush()
+    item = await get_submission(session, submission_id)
     await session.commit()
+
     logger.info(
         "submission_reviewed",
         extra={"submission_id": submission_id, "status": payload.status.value, "reviewer_id": reviewer.id},
     )
-    return await get_submission(session, submission_id)
+    return item
 
 
 async def status_counts(session: AsyncSession) -> dict[str, int]:

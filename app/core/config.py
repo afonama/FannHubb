@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     email_verify_token_expire_hours: int = 48
     password_reset_token_expire_minutes: int = 30
+    # How a reset link reaches the user. "log" writes it to the application log
+    # (development only - the operator hands it over); "none" generates nothing and
+    # the API says so, instead of implying a link was sent. No mail transport is
+    # wired up yet; see README "Password reset".
+    password_reset_delivery: Literal["log", "none"] = "log"
 
     # ----------------------------------------------------------------- cors
     # Comma-separated list, e.g. "http://localhost:5173,https://fanhub.example.com"
@@ -163,6 +168,17 @@ class Settings(BaseSettings):
             raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters in production")
         if "*" in self.cors_origin_list:
             raise RuntimeError("CORS_ORIGINS must not be '*' in production")
+        if self.password_reset_delivery == "log":
+            # Not fatal - a demo may still need to boot - but reset tokens are
+            # single-use credentials, and writing them to production logs is how
+            # they end up in a log aggregator. Wire a real transport and set
+            # PASSWORD_RESET_DELIVERY=none before going live.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "password_reset_delivery_is_log_in_production",
+                extra={"hint": "set PASSWORD_RESET_DELIVERY=none once a mail transport exists"},
+            )
 
 
 @functools.lru_cache(maxsize=1)

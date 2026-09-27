@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -70,6 +70,12 @@ class ForgotPasswordResponse(BaseModel):
     """Always the same shape, whether or not the address exists (no enumeration)."""
 
     message: str
+    delivery: Literal["log", "none"] = Field(
+        description=(
+            "How the link is delivered, from server config. Constant for every "
+            "caller, so it cannot be used to probe whether an account exists."
+        )
+    )
     reset_url: str | None = Field(
         default=None,
         description="Populated only when DEBUG=true so local testers can follow the link",

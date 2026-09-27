@@ -21,14 +21,25 @@ class FeedbackCreate(BaseModel):
 
 
 class FeedbackRead(ORMModel):
+    """What the submitting user is allowed to see.
+
+    Deliberately excludes ``admin_note``: it is staff-only working commentary
+    about how the report was handled, not a status the submitter asked for.
+    """
+
     id: int
     user_id: int | None = None
     type: FeedbackType
     message: str
     status: FeedbackStatus
-    admin_note: str | None = None
     created_at: dt.datetime
     updated_at: dt.datetime | None = None
+
+
+class FeedbackAdminRead(FeedbackRead):
+    """Admin view: the public fields plus the internal note."""
+
+    admin_note: str | None = None
 
 
 class FeedbackUpdate(BaseModel):

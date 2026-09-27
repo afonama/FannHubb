@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.db.models.content import ContentStatus, ContentType
 from app.schemas.common import ORMModel
@@ -112,9 +112,14 @@ class ContentUpdate(BaseModel):
 
 
 class ContentFilters(BaseModel):
-    """Query model for ``GET /content`` (bound with ``Annotated[..., Query()]``)."""
+    """Query model for ``GET /content`` (bound with ``Annotated[..., Query()]``).
 
-    model_config = ConfigDict(extra="forbid")
+    Unknown query keys are ignored on purpose. Pagination arrives through a
+    separate ``PageParams`` dependency on the same route, so ``page``/``page_size``
+    are present in the query string without being fields here; ``extra="forbid"``
+    would reject them and make this the only list endpoint in the API that 422s on
+    ``?page=2``.
+    """
 
     category: str | None = Field(
         default=None, max_length=60, description="Category slug, e.g. 'anime'"

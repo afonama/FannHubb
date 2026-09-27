@@ -125,8 +125,10 @@ async def forgot_password(
 ) -> ForgotPasswordResponse:
     """Always returns 200 with an identical message, so accounts cannot be probed.
 
-    The raw reset link is logged server-side; it is echoed in the response only
-    when ``DEBUG=true`` so a demo without a mail server still works.
+    ``delivery`` reports the configured channel: ``log`` means the link went to
+    the application log (development), ``none`` means no link was generated at
+    all because this deployment has no reset transport. Neither value depends on
+    whether the address exists.
     """
     return await auth_service.forgot_password(db, payload.email)
 
