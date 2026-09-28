@@ -1,0 +1,46 @@
+/* ==========================================================================
+   Fan Hub Plus — Theme refinements
+   Atmospheric glass surfaces + soft ambient lighting.
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+  --navbar-blur: rgba(11, 9, 16, 0.62);
+  --bottom-nav-blur: rgba(11, 9, 16, 0.66);
+}
+
+[data-theme="light"] {
+  --navbar-blur: rgba(250, 247, 245, 0.72);
+  --bottom-nav-blur: rgba(250, 247, 245, 0.76);
+}
+
+.fh-navbar {
+  background: var(--navbar-blur);
+  backdrop-filter: blur(38px) saturate(155%);
+  -webkit-backdrop-filter: blur(38px) saturate(155%);
+  border-bottom: 1px solid var(--border);
+}
+
+.fh-bottom-nav {
+  background: var(--bottom-nav-blur);
+  backdrop-filter: blur(40px) saturate(160%);
+  -webkit-backdrop-filter: blur(40px) saturate(160%);
+  border-top: 1px solid var(--border);
+}
+
+/* Keep media surfaces crisp without flattening the artwork/placeholder. */
+[data-theme="dark"] .explore-thumb,
+[data-theme="dark"] .feed-card-media,
+[data-theme="dark"] .media-frame {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.055),
+    0 10px 28px rgba(0, 0, 0, 0.10);
+}
+
+[data-theme="light"] .explore-thumb,
+[data-theme="light"] .feed-card-media,
+[data-theme="light"] .media-frame {
+  box-shadow:
+    inset 0 0 0 1px rgba(111, 58, 83, 0.07),
+    0 10px 28px rgba(145, 76, 106, 0.07);
+}

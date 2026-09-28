@@ -1,0 +1,5 @@
+services:
+  - type: web
+    name: fan-hub-plus-frontend
+    runtime: static
+    staticPublishPath: .

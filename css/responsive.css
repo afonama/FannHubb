@@ -1,0 +1,132 @@
+/* ==========================================================================
+   Fan Hub Plus — Responsive rules
+   ========================================================================== */
+
+/* ---------- Laptop / desktop (≥992px): use the extra width ----------
+   Below this, everything stays the phone-width layout as designed. */
+@media (min-width: 992px) {
+  :root {
+    --max-width: 1200px;
+  }
+
+  .fh-nav-links-desktop {
+    display: flex !important;
+  }
+
+  .fh-navbar > div,
+  .fh-footer > div {
+    max-width: var(--max-width) !important;
+  }
+
+  .page-content {
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
+
+  .chip-grid {
+    grid-template-columns: repeat(8, 1fr);
+    gap: 0.8rem;
+  }
+
+  .explore-grid {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 1.4rem;
+  }
+
+  .feed-card {
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .fandom-rail {
+    justify-content: space-between;
+    overflow-x: visible;
+    gap: 1rem;
+  }
+
+  .fandom-story {
+    width: 74px;
+  }
+
+  .fandom-story-ring {
+    width: 66px;
+    height: 66px;
+    font-size: 1.5rem;
+  }
+
+}
+
+@media (max-width: 991px) {
+  .explore-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  }
+}
+
+@media (max-width: 575px) {
+  .page-content {
+    padding: 0.95rem 0.85rem 2.2rem;
+  }
+
+  .fandom-story {
+    width: 58px;
+  }
+
+  .fandom-story-ring {
+    width: 52px;
+    height: 52px;
+    font-size: 1.2rem;
+  }
+
+  .chip-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.4rem;
+  }
+
+  .chip {
+    padding: 0.6rem 0.2rem;
+    font-size: 0.68rem;
+  }
+
+  .chip .chip-icon {
+    font-size: 1.15rem;
+  }
+
+  .explore-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.7rem;
+  }
+
+  h1.display {
+    font-size: 1.5rem !important;
+  }
+
+  .fh-card {
+    padding: 0.95rem;
+  }
+
+  .feed-card-body {
+    padding: 0.8rem 0.85rem 0.65rem;
+  }
+
+  .feed-card-actions {
+    padding: 0 0.85rem 0.8rem;
+  }
+}
+
+/* Wide tables (admin panels) scroll horizontally instead of breaking layout */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
